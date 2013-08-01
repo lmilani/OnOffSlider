@@ -1,6 +1,6 @@
 /*
  * Luca Milani (mail at lucamilani dot eu)
- * (c) 2013 Luca Milani all rights reserved
+ * 12/07/2013
  */
 
 #include "onoffslider.h"
@@ -11,23 +11,53 @@
 #include <QApplication>
 
 OnOffSlider::OnOffSlider(QWidget *parent) :
-    QCheckBox(parent)
+    QWidget(parent)
 {
     _target       = 75;
     _position     = 75;
+    _locked       = false;
     _textPosition = PositionRight;
+    _mode         = BiState;
+    _currentState = Undefined;
+    _appearance   = Horizontal;
 }
 
 OnOffSlider::OnOffSlider(const QString &text, QWidget *parent) :
-    QCheckBox(text, parent)
+    QWidget(parent), _text(text)
 {
     _target       = 75;
     _position     = 75;
+    _locked       = false;
     _textPosition = PositionRight;
+    _mode         = BiState;
+    _currentState = Off;
+    _appearance   = Horizontal;
 }
 
 OnOffSlider::~OnOffSlider()
 {
+}
+
+void OnOffSlider::setState(State state)
+{
+    _currentState = state;
+
+    switch(state)
+    {
+    case WaitingOn:
+    case On:
+        _target = 7;
+        break;
+
+    case WaitingOff:
+    case Off:
+        _target = 75;
+        break;
+    }
+
+    emit stateChanged(state);
+
+    update();
 }
 
 void OnOffSlider::paintEvent(QPaintEvent *)
@@ -51,7 +81,6 @@ void OnOffSlider::paintEvent(QPaintEvent *)
         break;
     }
 
-
     qreal scale = ((qreal)this->width())/currentWidth;
     QMatrix matrix;
     matrix.scale(scale,scale);
@@ -70,7 +99,7 @@ void OnOffSlider::paintEvent(QPaintEvent *)
         break;
 
     case PositionLeft:
-        p.translate( fm.width(this->text())+5, 0 );
+        p.translate( fm.width(_text)+5, 0 );
         break;
     }
 
@@ -90,10 +119,30 @@ void OnOffSlider::paintEvent(QPaintEvent *)
     blackPen.setColor(Qt::black);
 
     QLinearGradient lg( QPoint(4,25), QPoint(150,25) );
-    lg.setColorAt( 0.00, Qt::red   );
-    lg.setColorAt( 0.49, Qt::red   );
-    lg.setColorAt( 0.51, Qt::darkGreen   );
-    lg.setColorAt( 1.00, Qt::darkGreen );
+    if( _mode == BiState ||
+        (_mode == FourState && _currentState == Off) )
+    {
+        lg.setColorAt( 0.00, Qt::red   );
+        lg.setColorAt( 0.49, Qt::red   );
+    }
+    else
+    if( _mode == FourState && (_currentState == WaitingOff || _currentState == WaitingOn) )
+    {
+        lg.setColorAt( 0.00, Qt::yellow   );
+        lg.setColorAt( 0.49, Qt::yellow   );
+    }
+
+    if( (_mode == BiState && _currentState == WaitingOn) ||
+        _currentState == On || _currentState == Off )
+    {
+        lg.setColorAt( 0.51, Qt::darkGreen );
+        lg.setColorAt( 1.00, Qt::darkGreen );
+    }
+    else
+    {
+        lg.setColorAt( 0.51, Qt::yellow );
+        lg.setColorAt( 1.00, Qt::yellow );
+    }
 
     QLinearGradient dg( QPoint(0,0), QPoint(75,50) );
     dg.setColorAt(0, Qt::gray);
@@ -119,10 +168,12 @@ void OnOffSlider::paintEvent(QPaintEvent *)
     p.drawText( QRect( 75, 6, 75, 44 ),  Qt::AlignHCenter | Qt::AlignVCenter, "ON" );
     p.restore();
 
+    // Disegno il tasto
     p.save();
     p.setPen(blackPen);
     p.setBrush(dg);
-    if(this->isChecked() && _position == _target )
+    if( ((_mode == BiState && _currentState == On) ||
+        (_mode == FourState && (_currentState == On || _currentState == WaitingOn))) && _position == _target )
     {
         p.drawRoundedRect( QRect( 7, 7, 75, 44 ), 3, 3 );
     }
@@ -139,6 +190,7 @@ void OnOffSlider::paintEvent(QPaintEvent *)
     }
     p.restore();
 
+    // Disegno le linee
     p.save();
     p.setPen(Qt::darkGray);
     for( int i = 0; i < 3; i++ )
@@ -158,22 +210,22 @@ void OnOffSlider::paintEvent(QPaintEvent *)
     {
     case PositionTop:
         textRect = QRect( QPoint(0, 0), QSize(160*scale, fm.height()) );
-        p.drawText( textRect, Qt::AlignVCenter | Qt::AlignHCenter, this->text() );
+        p.drawText( textRect, Qt::AlignVCenter | Qt::AlignHCenter, _text );
         break;
 
     case PositionBottom:
         textRect = QRect( QPoint(0, 54*scale), QSize(160*scale, fm.height()) );
-        p.drawText( textRect, Qt::AlignVCenter | Qt::AlignHCenter, this->text() );
+        p.drawText( textRect, Qt::AlignVCenter | Qt::AlignHCenter, _text );
         break;
 
     case PositionLeft:
-        textRect = QRect( QPoint(0, 0), QSize(fm.width(this->text()), 54*scale) );
-        p.drawText( textRect, Qt::AlignVCenter | Qt::AlignRight, this->text() );
+        textRect = QRect( QPoint(0, 0), QSize(fm.width(_text), 54*scale) );
+        p.drawText( textRect, Qt::AlignVCenter | Qt::AlignRight, _text );
         break;
 
     case PositionRight:
-        textRect = QRect( QPoint(160*scale, 0), QSize(fm.width(this->text()), 54*scale) );
-        p.drawText( textRect, Qt::AlignVCenter | Qt::AlignLeft, this->text() );
+        textRect = QRect( QPoint(160*scale, 0), QSize(fm.width(_text), 54*scale) );
+        p.drawText( textRect, Qt::AlignVCenter | Qt::AlignLeft, _text );
         break;
     }
     p.restore();
@@ -183,14 +235,7 @@ void OnOffSlider::mousePressEvent(QMouseEvent *e)
 {
     if( e->button() == Qt::LeftButton )
     {
-        if( this->isChecked() )
-        {
-            _target = 75;
-        }
-        else
-        {
-            _target = 7;
-        }
-        this->setChecked( !this->isChecked() );
+        nextState();
+        emit clicked();
     }
 }
